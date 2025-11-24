@@ -9,7 +9,15 @@ import { SymbolSearch } from './components/SymbolSearch';
 import { aggregatorService } from './services/aggregatorService'; 
 import { initializeGemini } from './services/geminiService';
 import { applyIndicators } from './services/indicatorService';
+import { marketService } from './services/marketService';
 import { Candle, ExchangeEvent, Ticker, IndicatorConfig, ChartStyle, DrawingToolType } from './types';
+
+// Order Book Item Interface
+interface OrderBookItem {
+  price: number;
+  amount: number;
+  total: number;
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'monitor' | 'docs'>('dashboard');
@@ -20,6 +28,10 @@ function App() {
   const [events, setEvents] = useState<ExchangeEvent[]>([]);
   const [pair, setPair] = useState('BTC/USDT');
   
+  // Order Book State (Stable)
+  const [orderBookAsks, setOrderBookAsks] = useState<OrderBookItem[]>([]);
+  const [orderBookBids, setOrderBookBids] = useState<OrderBookItem[]>([]);
+
   // Chart Configuration State
   const [interval, setInterval] = useState('5m'); 
   const [chartStyle, setChartStyle] = useState<ChartStyle>('candle_solid');
@@ -58,7 +70,34 @@ function App() {
 
   useEffect(() => {
     initializeGemini();
+    // Prefetch pairs for quick search
+    marketService.getAvailablePairs(); 
   }, []);
+
+  // Stable Order Book Generator
+  useEffect(() => {
+      if (!ticker) return;
+      
+      // Only regenerate if price moves significantly to avoid jitter
+      // In a real app, this would come from WS delta updates
+      const generateBook = (basePrice: number, isAsk: boolean) => {
+          return [...Array(15)].map((_, i) => {
+              const price = isAsk 
+                  ? basePrice + (i + 1) * (basePrice * 0.0001) 
+                  : basePrice - (i + 1) * (basePrice * 0.0001);
+              const amount = 0.5 + Math.abs(Math.sin(price + i)) * 2; // Deterministic "random"
+              return {
+                  price,
+                  amount,
+                  total: amount * price
+              };
+          });
+      };
+
+      setOrderBookAsks(generateBook(ticker.price, true).reverse());
+      setOrderBookBids(generateBook(ticker.price, false));
+
+  }, [Math.floor(ticker?.price || 0)]); // Only update when integer price changes to be stable
 
   useEffect(() => {
     setCandles([]); 
@@ -106,7 +145,7 @@ function App() {
 
   const getMarketContext = useCallback(() => {
     if (!ticker) return "数据连接中...";
-    return `Mode: Aggregation (Binance+OKX)
+    return `Mode: Aggregation (Binance+OKX+Bybit)
     交易对: ${ticker.symbol}
     周期: ${interval}
     当前价格: $${ticker.price.toFixed(2)}
@@ -168,7 +207,7 @@ function App() {
                <div className="w-8 h-px bg-bg-tertiary my-1" />
                <ToolButton 
                  tool="eraser" 
-                 label="橡皮擦 (Click to delete)"
+                 label="橡皮擦 (Click line to delete)"
                  icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>}
                />
             </div>
@@ -301,7 +340,7 @@ function App() {
                  ) : (
                    <div className="flex flex-col items-center justify-center h-full text-text-secondary gap-2">
                         <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
-                        <span className="text-sm font-medium">正在建立数据流连接...</span>
+                        <span className="text-sm font-medium">正在建立全网聚合数据流连接...</span>
                    </div>
                  )}
               </div>
@@ -310,7 +349,7 @@ function App() {
             {/* Right Side: Orderbook / Depth */}
             <div className="col-span-12 md:col-span-3 lg:col-span-2 row-span-4 md:row-span-12 bg-bg-secondary border-l border-bg-tertiary flex flex-col">
                <div className="h-12 border-b border-bg-tertiary flex items-center px-3 bg-bg-secondary shrink-0">
-                   <span className="text-sm font-medium text-white">Order Book</span>
+                   <span className="text-sm font-medium text-white">Order Book (Static)</span>
                </div>
                
                <div className="grid grid-cols-3 px-2 py-1.5 text-[10px] text-text-secondary mb-1 bg-bg-tertiary/20">
@@ -321,18 +360,14 @@ function App() {
 
                <div className="flex-1 overflow-hidden text-xs font-mono relative">
                   <div className="flex flex-col-reverse justify-end pb-1 h-1/2 overflow-hidden">
-                     {[...Array(15)].map((_, i) => {
-                        const p = (ticker?.price || 65000) + (i+1)*1.5;
-                        const a = Math.random() * 2;
-                        return (
+                     {orderBookAsks.map((item, i) => (
                            <div key={`ask-${i}`} className="grid grid-cols-3 px-2 py-[1px] hover:bg-bg-tertiary cursor-pointer relative group">
-                               <div className="absolute top-0 right-0 bottom-0 bg-trade-down/10 z-0 transition-all duration-500" style={{width: `${Math.random()*100}%`}}></div>
-                               <span className="text-trade-down z-10 group-hover:font-bold">{p.toFixed(1)}</span>
-                               <span className="text-right text-text-primary z-10 opacity-80">{a.toFixed(3)}</span>
-                               <span className="text-right text-text-secondary z-10">{(a*p/1000).toFixed(1)}K</span>
+                               <div className="absolute top-0 right-0 bottom-0 bg-trade-down/10 z-0 transition-all duration-500" style={{width: `${(item.amount / 5) * 100}%`}}></div>
+                               <span className="text-trade-down z-10 group-hover:font-bold">{item.price.toFixed(2)}</span>
+                               <span className="text-right text-text-primary z-10 opacity-80">{item.amount.toFixed(3)}</span>
+                               <span className="text-right text-text-secondary z-10">{(item.total / 1000).toFixed(1)}K</span>
                            </div>
-                        )
-                     })}
+                     ))}
                   </div>
 
                   <div className="border-y border-bg-tertiary py-1.5 flex items-center justify-center gap-2 bg-bg-tertiary/30 my-1">
@@ -343,18 +378,14 @@ function App() {
                   </div>
 
                   <div className="flex flex-col pt-1 h-1/2 overflow-hidden">
-                     {[...Array(15)].map((_, i) => {
-                        const p = (ticker?.price || 65000) - (i+1)*1.5;
-                        const a = Math.random() * 3;
-                        return (
+                     {orderBookBids.map((item, i) => (
                            <div key={`bid-${i}`} className="grid grid-cols-3 px-2 py-[1px] hover:bg-bg-tertiary cursor-pointer relative group">
-                               <div className="absolute top-0 right-0 bottom-0 bg-trade-up/10 z-0 transition-all duration-500" style={{width: `${Math.random()*100}%`}}></div>
-                               <span className="text-trade-up z-10 group-hover:font-bold">{p.toFixed(1)}</span>
-                               <span className="text-right text-text-primary z-10 opacity-80">{a.toFixed(3)}</span>
-                               <span className="text-right text-text-secondary z-10">{(a*p/1000).toFixed(1)}K</span>
+                               <div className="absolute top-0 right-0 bottom-0 bg-trade-up/10 z-0 transition-all duration-500" style={{width: `${(item.amount / 5) * 100}%`}}></div>
+                               <span className="text-trade-up z-10 group-hover:font-bold">{item.price.toFixed(2)}</span>
+                               <span className="text-right text-text-primary z-10 opacity-80">{item.amount.toFixed(3)}</span>
+                               <span className="text-right text-text-secondary z-10">{(item.total / 1000).toFixed(1)}K</span>
                            </div>
-                        )
-                     })}
+                     ))}
                   </div>
                </div>
             </div>

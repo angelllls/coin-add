@@ -25,6 +25,15 @@ const formatDate = (timestamp: number) => {
   return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 };
 
+// Math Helper: Distance from point P to segment VW
+function distanceToSegment(p: {x:number, y:number}, v: {x:number, y:number}, w: {x:number, y:number}) {
+    const l2 = (v.x - w.x)**2 + (v.y - w.y)**2;
+    if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+    let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
+}
+
 export const CandlestickChart: React.FC<ChartProps> = ({ 
   data, 
   indicators = [], 
@@ -133,13 +142,9 @@ export const CandlestickChart: React.FC<ChartProps> = ({
 
   // Time -> Index (Approximation)
   const getIndexAtTime = (time: number) => {
-      // Find closest existing candle
-      // Performance optimization: assume sorted
-      // Simple binary search or just findIndex for now
       const idx = dataRef.current.findIndex(c => c.time >= time);
       if (idx !== -1) return idx;
       
-      // If time is future, extrapolate
       if (dataRef.current.length > 1) {
           const last = dataRef.current[dataRef.current.length - 1];
           const prev = dataRef.current[dataRef.current.length - 2];
@@ -229,7 +234,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
         }
       }
       
-      // Safety defaults
       if (minPrice === Infinity) { minPrice = 0; maxPrice = 100; }
       const padding = (maxPrice - minPrice) * 0.15;
       maxPrice += padding; 
@@ -251,14 +255,8 @@ export const CandlestickChart: React.FC<ChartProps> = ({
       const priceRange = maxPrice - minPrice;
       const volHeight = chartHeight * 0.2; 
 
-      // Helper to push rect to buffer
       const pushRect = (x: number, y: number, w: number, h: number, r: number, g: number, b: number, a: number) => {
-        // WebGL coord system: (0,0) bottom-left. 
-        // Our Y calculation: 
-        // chartHeight is the top of the axis area (bottom of the chart area).
-        // So we shift Y up by bottomAxisHeight.
         const glY = y + bottomAxisHeight; 
-        
         const x2 = x + w, y2 = glY + h;
         positions.push(x, glY, x2, glY, x, y2);
         colors.push(r,g,b,a, r,g,b,a, r,g,b,a);
@@ -274,13 +272,11 @@ export const CandlestickChart: React.FC<ChartProps> = ({
         const color = isUp ? COLOR_UP : COLOR_DOWN;
         const volColor = isUp ? COLOR_VOL_UP : COLOR_VOL_DOWN;
 
-        // X coordinate (from left)
         const x = (i - startIndex) * candleWidthPx;
         const centerX = x + candleWidthPx * 0.5;
         const barW = candleWidthPx * 0.7;
         const wickW = Math.max(1 * dpr, candleWidthPx * 0.1);
 
-        // Y coordinate mapping (0 to chartHeight)
         const mapY = (p: number) => ((p - minPrice) / priceRange) * chartHeight;
         
         const yOpen = mapY(d.open);
@@ -292,19 +288,15 @@ export const CandlestickChart: React.FC<ChartProps> = ({
         const rectBottom = Math.min(yOpen, yClose);
         const rectHeight = Math.max(1 * dpr, rectTop - rectBottom);
 
-        // Draw Volume
         const vH = (d.volume / maxVol) * volHeight;
         pushRect(centerX - barW/2, 0, barW, vH, volColor[0], volColor[1], volColor[2], volColor[3]);
 
         if (styleRef.current !== 'line') {
-             // Wick
              pushRect(centerX - wickW/2, yLow, wickW, yHigh - yLow, color[0], color[1], color[2], 255);
-             // Body
              pushRect(centerX - barW/2, rectBottom, barW, rectHeight, color[0], color[1], color[2], 255);
         }
       }
 
-      // Draw Buffers
       gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.DYNAMIC_DRAW);
       gl.enableVertexAttribArray(positionLoc);
@@ -321,7 +313,7 @@ export const CandlestickChart: React.FC<ChartProps> = ({
 
       gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2);
 
-      // Draw Indicators (Lines)
+      // Draw Indicators
       const drawLineStrip = (pts: {x:number, y:number}[], colorHex: string, widthPx: number) => {
          const linePos: number[] = [];
          const lineCol: number[] = [];
@@ -329,15 +321,10 @@ export const CandlestickChart: React.FC<ChartProps> = ({
          const g = parseInt(colorHex.slice(3,5), 16);
          const b = parseInt(colorHex.slice(5,7), 16);
          
-         // Convert CSS hex to GL
          for(let i=0; i<pts.length-1; i++) {
-             // GL_LINES needs pairs, simple workaround for strip
-             // Better to use GL_LINE_STRIP but we're reusing the triangle buffer logic for simplicity
-             // Actually let's just make a new draw call with LINE_STRIP
              linePos.push(pts[i].x, pts[i].y + bottomAxisHeight);
              lineCol.push(r,g,b,255);
          }
-         // Add last point
          if(pts.length > 0) {
              const last = pts[pts.length-1];
              linePos.push(last.x, last.y + bottomAxisHeight);
@@ -356,7 +343,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
          gl.drawArrays(gl.LINE_STRIP, 0, pts.length);
       };
 
-      // Draw Main Line if selected
       if (styleRef.current === 'line') {
           const points = [];
           for (let i = Math.floor(startIndex); i < endIndex; i++) {
@@ -370,7 +356,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
           if(points.length > 0) drawLineStrip(points, '#2962ff', 2);
       }
 
-      // Draw Indicators
       indicatorsRef.current.forEach(ind => {
           const points = [];
           for (let i = Math.floor(startIndex); i < endIndex; i++) {
@@ -402,19 +387,18 @@ export const CandlestickChart: React.FC<ChartProps> = ({
       ctx.font = '10px monospace';
       ctx.fillStyle = '#787b86';
 
-      // Draw Right Axis Background
+      // Backgrounds
       ctx.fillStyle = '#131722';
       ctx.fillRect(logChartWidth, 0, rightAxisWidth/dpr, logHeight);
       ctx.fillRect(0, logChartHeight, logWidth, bottomAxisHeight/dpr);
       
-      // Draw Border
       ctx.beginPath();
       ctx.moveTo(logChartWidth, 0);
       ctx.lineTo(logChartWidth, logChartHeight);
       ctx.lineTo(0, logChartHeight);
       ctx.stroke();
 
-      // Y-Axis Ticks (Price)
+      // Y-Axis Ticks
       const numYTicks = 8;
       ctx.fillStyle = '#787b86';
       for (let i = 0; i <= numYTicks; i++) {
@@ -422,35 +406,29 @@ export const CandlestickChart: React.FC<ChartProps> = ({
           const y = logChartHeight * (1 - ratio);
           const price = minPrice + ratio * priceRange;
           
-          // Grid Line
           ctx.beginPath();
           ctx.strokeStyle = '#2a2e39';
           ctx.moveTo(0, y);
           ctx.lineTo(logChartWidth, y);
           ctx.stroke();
 
-          // Label
           ctx.fillText(price.toFixed(2), logChartWidth + 5, y + 3);
       }
 
-      // X-Axis Ticks (Time)
-      // Determine interval for labels based on visible count
-      const skip = Math.ceil(visibleCount / 6); 
-      
+      // X-Axis Ticks
+      const skip = Math.max(1, Math.ceil(visibleCount / 6)); 
       for (let i = Math.ceil(startIndex); i < endIndex; i++) {
           if (i % skip === 0) {
              const d = currentData[i];
              if(!d) continue;
              const x = getXAtIndex(i);
              
-             // Grid Line
              ctx.beginPath();
              ctx.strokeStyle = '#2a2e39';
              ctx.moveTo(x, 0);
              ctx.lineTo(x, logChartHeight);
              ctx.stroke();
 
-             // Label
              ctx.fillText(formatDate(d.time), x - 15, logChartHeight + 15);
           }
       }
@@ -464,7 +442,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
           
-          // Endpoints
           ctx.fillStyle = color;
           ctx.beginPath(); ctx.arc(p1.x, p1.y, 3, 0, Math.PI*2); ctx.fill();
           ctx.beginPath(); ctx.arc(p2.x, p2.y, 3, 0, Math.PI*2); ctx.fill();
@@ -493,14 +470,12 @@ export const CandlestickChart: React.FC<ChartProps> = ({
               const x1 = getXAtIndex(p1Index);
               const y1 = getYAtPrice(p1.price);
               const x2 = getXAtIndex(p2Index);
-              const y2 = getYAtPrice(p2.price); // defines height
+              const y2 = getYAtPrice(p2.price);
 
-              // Fib Levels
               const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
-              const diffY = y2 - y1; // Screen pixel difference
+              const diffY = y2 - y1;
               const diffP = p2.price - p1.price;
 
-              // Draw trendline first
               ctx.setLineDash([5, 5]);
               renderLine({x: x1, y: y1}, {x: x2, y: y2}, '#787b86');
               ctx.setLineDash([]);
@@ -512,7 +487,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
                   ctx.beginPath();
                   ctx.strokeStyle = d.properties?.color || '#2962ff';
                   ctx.lineWidth = 1;
-                  // Extend width a bit
                   const left = Math.min(x1, x2);
                   const right = Math.max(x1, x2) + 50; 
                   
@@ -534,11 +508,10 @@ export const CandlestickChart: React.FC<ChartProps> = ({
           }
       });
 
-      // 3. Crosshair & Mouse UI
+      // 3. Crosshair
       if (mousePos) {
           const { x, y } = mousePos;
           if (x < logChartWidth && y < logChartHeight) {
-              // Lines
               ctx.setLineDash([4, 4]);
               ctx.strokeStyle = '#9ca3af';
               ctx.lineWidth = 0.5;
@@ -554,19 +527,16 @@ export const CandlestickChart: React.FC<ChartProps> = ({
               ctx.stroke();
               ctx.setLineDash([]);
 
-              // Labels
               const price = getPriceAtY(y);
               const index = Math.round(getIndexAtX(x));
               const candle = currentData[index];
               const timeStr = candle ? formatDate(candle.time) : '--:--';
 
-              // Price Label (Right)
               ctx.fillStyle = '#2962ff';
               ctx.fillRect(logChartWidth, y - 10, rightAxisWidth/dpr, 20);
               ctx.fillStyle = '#fff';
               ctx.fillText(price.toFixed(2), logChartWidth + 5, y + 4);
 
-              // Time Label (Bottom)
               ctx.fillStyle = '#2962ff';
               const timeW = 40;
               ctx.fillRect(x - timeW/2, logChartHeight, timeW, 20);
@@ -610,20 +580,34 @@ export const CandlestickChart: React.FC<ChartProps> = ({
       const price = getPriceAtY(y);
       const index = Math.round(getIndexAtX(x));
       const candle = dataRef.current[index] || dataRef.current[dataRef.current.length-1];
-      const time = candle ? candle.time : Date.now(); // Fallback
+      const time = candle ? candle.time : Date.now(); 
 
-      // Eraser
+      // Improved Eraser Logic
       if (selectedTool === 'eraser') {
-          // Simple hit test (distance < 20px)
-          const hit = drawings.findIndex(d => {
-               const p1 = d.points[0];
-               const px1 = getXAtIndex(getIndexAtTime(p1.time));
-               const py1 = getYAtPrice(p1.price);
-               return Math.abs(px1 - x) < 20 && Math.abs(py1 - y) < 20;
+          const threshold = 10; // Pixel distance
+          const hitIndex = drawings.findIndex(d => {
+             // 1. Text Point Check
+             if (d.type === 'text') {
+                 const px = getXAtIndex(getIndexAtTime(d.points[0].time));
+                 const py = getYAtPrice(d.points[0].price);
+                 return Math.hypot(px - x, py - y) < 20;
+             }
+             // 2. Line Segment Check (Trendline, Fib)
+             if (d.points.length >= 2) {
+                 const px1 = getXAtIndex(getIndexAtTime(d.points[0].time));
+                 const py1 = getYAtPrice(d.points[0].price);
+                 const px2 = getXAtIndex(getIndexAtTime(d.points[1].time));
+                 const py2 = getYAtPrice(d.points[1].price);
+                 
+                 const dist = distanceToSegment({x,y}, {x:px1, y:py1}, {x:px2, y:py2});
+                 return dist < threshold;
+             }
+             return false;
           });
-          if (hit !== -1) {
+
+          if (hitIndex !== -1) {
               const newDrawings = [...drawings];
-              newDrawings.splice(hit, 1);
+              newDrawings.splice(hitIndex, 1);
               setDrawings(newDrawings);
           }
           return;
@@ -642,17 +626,15 @@ export const CandlestickChart: React.FC<ChartProps> = ({
                   }]);
               }
           } else {
-              // Trendline / Fib - Start
               setCurrentDrawing({
                   id: Date.now().toString(),
                   type: selectedTool as DrawingToolType,
-                  points: [{time, price}, {time, price}], // p1, p2 same initially
+                  points: [{time, price}, {time, price}], 
                   state: 'drawing',
                   properties: { color: '#2962ff' }
               });
           }
       } else {
-          // Finish Drawing (Second Click)
           setDrawings(prev => [...prev, {
               ...currentDrawing,
               points: [currentDrawing.points[0], {time, price}],
@@ -669,7 +651,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
       const y = e.clientY - rect.top;
       setMousePos({ x, y });
 
-      // Pan Chart
       if (isDragging.current) {
           const dx = x - lastMouseX.current;
           const { visibleCount, width } = viewState.current;
@@ -677,7 +658,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
           const moveCount = dx / pxPerCandle;
           
           let newOffset = viewState.current.offsetIndex + moveCount;
-          // Clamp
           newOffset = Math.max(0, Math.min(dataRef.current.length - visibleCount/2, newOffset));
           
           viewState.current.offsetIndex = newOffset;
@@ -685,7 +665,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
           return;
       }
 
-      // Update Current Drawing Preview
       if (currentDrawing) {
           const price = getPriceAtY(y);
           const index = Math.round(getIndexAtX(x));
@@ -730,7 +709,6 @@ export const CandlestickChart: React.FC<ChartProps> = ({
           onMouseLeave={handleMouseLeave}
       />
       
-      {/* Legend */}
       <div className="absolute top-2 left-2 z-20 pointer-events-none text-xs flex flex-col gap-1">
           <div className="flex gap-4">
                {data.length > 0 && (() => {

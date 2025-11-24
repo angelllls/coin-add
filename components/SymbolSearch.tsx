@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { marketService } from '../services/marketService';
 
 interface SymbolSearchProps {
   isOpen: boolean;
@@ -7,44 +8,34 @@ interface SymbolSearchProps {
   onSelect: (symbol: string) => void;
 }
 
-// Mock Data Source for Search
-const MOCK_PAIRS = [
-  { s: 'BTC/USDT', n: 'Bitcoin', e: 'Binance', v: '1.2B' },
-  { s: 'ETH/USDT', n: 'Ethereum', e: 'OKX', v: '800M' },
-  { s: 'SOL/USDT', n: 'Solana', e: 'Binance', v: '400M' },
-  { s: 'DOGE/USDT', n: 'Dogecoin', e: 'Bybit', v: '150M' },
-  { s: 'XRP/USDT', n: 'Ripple', e: 'Binance', v: '200M' },
-  { s: 'BNB/USDT', n: 'BNB', e: 'Binance', v: '100M' },
-  { s: 'ADA/USDT', n: 'Cardano', e: 'OKX', v: '50M' },
-  { s: 'AVAX/USDT', n: 'Avalanche', e: 'Binance', v: '45M' },
-  { s: 'TRX/USDT', n: 'Tron', e: 'HTX', v: '30M' },
-  { s: 'DOT/USDT', n: 'Polkadot', e: 'Binance', v: '25M' },
-  { s: 'PEPE/USDT', n: 'Pepe', e: 'OKX', v: '120M' },
-  { s: 'WIF/USDT', n: 'dogwifhat', e: 'Bybit', v: '80M' },
-];
-
 export const SymbolSearch: React.FC<SymbolSearchProps> = ({ isOpen, onClose, onSelect }) => {
   const [search, setSearch] = useState('');
-  const [results, setResults] = useState(MOCK_PAIRS);
+  const [allPairs, setAllPairs] = useState<any[]>([]);
+  const [results, setResults] = useState<any[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
-      setTimeout(() => inputRef.current?.focus(), 50); // Small delay for animation
+      setTimeout(() => inputRef.current?.focus(), 50);
       setSearch('');
-      setResults(MOCK_PAIRS);
+      setLoading(true);
+      marketService.getAvailablePairs().then(pairs => {
+          setAllPairs(pairs);
+          setResults(pairs);
+          setLoading(false);
+      });
     }
   }, [isOpen]);
 
   useEffect(() => {
     const lower = search.toLowerCase();
-    const filtered = MOCK_PAIRS.filter(p => 
-      p.s.toLowerCase().includes(lower) || 
-      p.n.toLowerCase().includes(lower) ||
-      p.e.toLowerCase().includes(lower)
+    const filtered = allPairs.filter(p => 
+      p.symbol.toLowerCase().includes(lower) || 
+      p.exchange.toLowerCase().includes(lower)
     );
     setResults(filtered);
-  }, [search]);
+  }, [search, allPairs]);
 
   if (!isOpen) return null;
 
@@ -82,7 +73,9 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({ isOpen, onClose, onS
 
         {/* Results List */}
         <div className="flex-1 overflow-y-auto bg-bg-secondary custom-scrollbar">
-          {results.length > 0 ? (
+          {loading ? (
+             <div className="p-8 text-center text-text-secondary">正在检索所有交易所数据...</div>
+          ) : results.length > 0 ? (
             <table className="w-full text-left border-collapse">
               <thead className="text-xs text-text-secondary sticky top-0 bg-bg-secondary border-b border-bg-tertiary z-10">
                 <tr>
@@ -95,29 +88,28 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({ isOpen, onClose, onS
                 {results.map((item, idx) => (
                   <tr 
                     key={idx}
-                    onClick={() => { onSelect(item.s); onClose(); }}
+                    onClick={() => { onSelect(item.symbol); onClose(); }}
                     className="cursor-pointer hover:bg-bg-tertiary transition-colors border-b border-bg-tertiary/30 last:border-0 group"
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold text-xs ring-1 ring-accent/20">
-                           {item.s.split('/')[0][0]}
+                           {item.base ? item.base[0] : item.symbol[0]}
                         </div>
                         <div>
-                          <div className="text-sm font-bold text-white group-hover:text-accent transition-colors">{item.s}</div>
-                          <div className="text-xs text-text-secondary">{item.n}</div>
+                          <div className="text-sm font-bold text-white group-hover:text-accent transition-colors">{item.symbol}</div>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-bg border border-bg-tertiary text-text-secondary uppercase">
-                                 {item.e}
+                                 {item.exchange}
                              </span>
                         </div>
                     </td>
                     <td className="px-4 py-3 text-right text-xs font-mono text-text-primary">
-                        {item.v}
+                        {item.volume}
                     </td>
                   </tr>
                 ))}
@@ -132,8 +124,8 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({ isOpen, onClose, onS
         </div>
         
         <div className="p-2 border-t border-bg-tertiary bg-bg text-center text-[10px] text-text-secondary flex justify-between px-4">
-           <span>Polaris Aggregator 搜索服务</span>
-           <span>v2.1.0</span>
+           <span>Polaris Global Market Data</span>
+           <span>Aggregated (Binance, OKX, Bybit)</span>
         </div>
       </div>
     </div>
