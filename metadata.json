@@ -1,0 +1,5 @@
+{
+  "name": "Polaris Trade - 聚合交易所终端 (WebGL Core)",
+  "description": "一个专业的加密货币交易数据聚合平台，仿TradingView风格。采用自研高性能 WebGL 渲染引擎绘制K线图表，支持百万级数据流畅交互。集成Binance/OKX聚合数据流与Gemini 2.5 Flash AI智能助手。",
+  "requestFramePermissions": []
+}
